@@ -90,7 +90,11 @@ folders.each do |folder|
 end
 
 # Work around bug with cached index in git gem
-git_repo.lib.send(:command_lines, 'update-index', ['--refresh'])
+begin
+  git_repo.lib.send(:command_lines, 'update-index', ['--refresh'])
+rescue
+  # The update-index command can fail, no big deal
+end
 
 puts
 puts "Status:"
