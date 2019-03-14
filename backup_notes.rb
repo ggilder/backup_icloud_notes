@@ -9,8 +9,9 @@ require "fileutils"
 require "cgi"
 
 # TODO:
-# - Add verbosity flag so we can not see every single note/folder
 # - Refactor esp. interactions around git repo
+
+verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
 
 backup_destination = ARGV.shift
 if !File.directory?(backup_destination) || !File.writable?(backup_destination)
@@ -63,9 +64,8 @@ notes_with_attachments = []
 puts "Backing up #{folders.count} folders"
 folders.each do |folder|
   folder_name = folder.name.get
-  puts %{Creating folder "#{folder_name}"}
+  puts %{Backing up #{folder.notes.count} notes in folder "#{folder_name}"}
   FileUtils.mkdir_p(File.join(backup_destination, folder_name))
-  puts "Backing up #{folder.notes.count} notes"
   folder.notes.get.each do |note|
     note_name = note.name.get
     note_file_name = note.modification_date.get.strftime('%Y-%m-%d ') + note_name.gsub(%r([/:]), "-") + ".html"
@@ -78,7 +78,9 @@ folders.each do |folder|
     html = note.body.get
     html = "<h1>#{CGI.escapeHTML(note_name)}</h1>\n<p>Created: #{note.creation_date.get}<br>Modified: #{note.modification_date.get}</p>\n" + html
 
-    puts %{Backing up "#{note_name}" to "#{note_file_name}"}
+    if verbose
+      puts %{Backing up "#{note_name}" to "#{note_file_name}"}
+    end
     File.write(note_path, html)
     notes_count += 1
 
