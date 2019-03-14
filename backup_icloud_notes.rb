@@ -1,5 +1,9 @@
 #!/usr/bin/env ruby
 
+# Allows the script to work (i.e. load Bundler dependencies) even when run from
+# a different working directory
+Dir.chdir(File.dirname(File.realpath(__FILE__)))
+
 require "rubygems"
 require "bundler"
 
