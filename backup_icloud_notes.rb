@@ -11,6 +11,7 @@ Bundler.require
 
 require "fileutils"
 require "cgi"
+require "open3"
 
 # TODO:
 # - Refactor esp. interactions around git repo
@@ -59,6 +60,40 @@ end
 # Delete existing notes so deletions will be caught
 File.delete(*Dir[File.join(backup_destination, "**", "*.html")])
 
+# Functions for getting formatted note data in the jankiest possible way
+def get_note_rtf(note)
+  note.show
+  script = <<EOD
+  tell application "System Events"
+        tell process "Notes"
+                click menu item "Float Selected Note" of menu "Window" of menu bar 1
+                click menu item "Select All" of menu "Edit" of menu bar 1
+                click menu item "Copy" of menu "Edit" of menu bar 1
+        end tell
+  end tell
+
+  tell application "Notes"
+          close front window
+          get (the clipboard as «class RTF »)
+  end tell
+EOD
+  out, err, status = Open3.capture3("osascript", stdin_data: script)
+  if status.success?
+    return out.match(/«data RTF ([0-9A-F]+)»/)[1].scan(/../).map { |x| x.hex }.pack('c*')
+  else
+    raise RuntimeError, err
+  end
+end
+
+def rtf_to_html(rtf_data)
+  out, err, status = Open3.capture3(*%w(textutil -stdin -stdout -convert html -format rtf), stdin_data: rtf_data)
+  if status.success?
+    return out
+  else
+    raise RuntimeError, err
+  end
+end
+
 notes_app = Appscript.app('Notes')
 folders = notes_app.folders.get
 folders = folders.reject { |folder| folder.name.get == "Recently Deleted" }
@@ -79,8 +114,8 @@ folders.each do |folder|
       exit 1
     end
 
-    html = note.body.get
-    html = "<h1>#{CGI.escapeHTML(note_name)}</h1>\n<p>Created: #{note.creation_date.get}<br>Modified: #{note.modification_date.get}</p>\n" + html
+    html = rtf_to_html(get_note_rtf(note))
+    html.sub!(/<body>/, "<body>\n<p>Created: #{note.creation_date.get}<br>Modified: #{note.modification_date.get}</p>")
 
     if verbose
       puts %{Backing up "#{note_name}" to "#{note_file_name}"}
@@ -94,6 +129,8 @@ folders.each do |folder|
     end
   end
 end
+
+notes_app.notes.first.show
 
 # Work around bug with cached index in git gem
 begin
