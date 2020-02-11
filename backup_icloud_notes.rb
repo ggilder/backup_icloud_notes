@@ -50,11 +50,10 @@ def git_repo_dirty(repo)
   end
 end
 
-# Commit any existing changes
+# Fail if any pre-existing changes
 if git_repo_dirty(git_repo)
-  puts "Committing pre-existing changes"
-  git_repo.add(all: true)
-  git_repo.commit("Backup pre-existing changes")
+  puts "Repo is not in a clean state!"
+  exit(1)
 end
 
 # Delete existing notes so deletions will be caught
@@ -154,6 +153,8 @@ if git_repo_dirty(git_repo)
   puts "Committing latest backup"
   git_repo.add(all: true)
   git_repo.commit("Backup notes")
+  puts "Pushing changes"
+  git_repo.push
 else
   puts "No changes to commit."
 end
