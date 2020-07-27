@@ -13,9 +13,6 @@ require "fileutils"
 require "cgi"
 require "open3"
 
-# TODO:
-# - Refactor esp. interactions around git repo
-
 verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
 
 backup_destination = ARGV.shift
@@ -59,9 +56,18 @@ end
 # Delete existing notes so deletions will be caught
 File.delete(*Dir[File.join(backup_destination, "**", "*.html")])
 
+def osascript(script)
+  out, err, status = Open3.capture3("osascript", stdin_data: script)
+  if status.success?
+    return out.chomp
+  else
+    raise RuntimeError, err
+  end
+end
+
 # Functions for getting formatted note data in the jankiest possible way
-def get_note_rtf(note)
-  note.show
+def get_note_rtf(note_query)
+  osascript(%{tell application "Notes" to show #{note_query}})
   script = <<EOD
   tell application "System Events"
         tell process "Notes"
@@ -76,12 +82,8 @@ def get_note_rtf(note)
           get (the clipboard as «class RTF »)
   end tell
 EOD
-  out, err, status = Open3.capture3("osascript", stdin_data: script)
-  if status.success?
-    return out.match(/«data RTF ([0-9A-F]+)»/)[1].scan(/../).map { |x| x.hex }.pack('c*')
-  else
-    raise RuntimeError, err
-  end
+  out = osascript(script)
+  return out.match(/«data RTF ([0-9A-F]+)»/)[1].scan(/../).map { |x| x.hex }.pack('c*')
 end
 
 def rtf_to_html(rtf_data)
@@ -93,28 +95,49 @@ def rtf_to_html(rtf_data)
   end
 end
 
-notes_app = Appscript.app('Notes')
-folders = notes_app.folders.get
-folders = folders.reject { |folder| folder.name.get == "Recently Deleted" }
+def get_count(query)
+  script = %{tell application "Notes" to get count of #{query}}
+  out = osascript(script)
+  out.to_i
+end
+
+def get_text(query)
+  script = %{tell application "Notes" to get #{query}}
+  osascript(script)
+end
+
+def get_date(query)
+  script = %{tell application "Notes" to get #{query}}
+  out = osascript(script)
+  DateTime.parse(out.sub(/^date /, ""))
+end
+
+
+folder_count = get_count("folders")
+folder_names = (1..folder_count).map { |n| get_text("name of folder #{n}") }
+folder_names.reject! { |name| name == "Recently Deleted" }
 
 notes_count = 0
 notes_with_attachments = []
-puts "Backing up #{folders.count} folders"
-folders.each do |folder|
-  folder_name = folder.name.get
-  puts %{Backing up #{folder.notes.count} notes in folder "#{folder_name}"}
+puts "Backing up #{folder_names.count} folders"
+folder_names.each do |folder_name|
+  notes_count = get_count(%{notes in folder "#{folder_name}"})
+  puts %{Backing up #{notes_count} notes in folder "#{folder_name}"}
   FileUtils.mkdir_p(File.join(backup_destination, folder_name))
-  folder.notes.get.each do |note|
-    note_name = note.name.get
-    note_file_name = note.modification_date.get.strftime('%Y-%m-%d ') + note_name.gsub(%r([/:]), "-") + ".html"
+  (1..notes_count).each do |note_idx|
+    note_query = %{note #{note_idx} of folder "#{folder_name}"}
+    note_name = get_text(%{name of #{note_query}})
+    creation_date = get_date(%{creation date of #{note_query}})
+    mod_date = get_date(%{modification date of #{note_query}})
+    note_file_name = mod_date.strftime('%Y-%m-%d ') + note_name.gsub(%r([/:]), "-") + ".html"
     note_path = File.join(backup_destination, folder_name, note_file_name)
     if File.exist?(note_path)
       $stderr.puts %{File name collision: "#{note_path}" already exists!}
       exit 1
     end
 
-    html = rtf_to_html(get_note_rtf(note))
-    html.sub!(/<body>/, "<body>\n<p>Created: #{note.creation_date.get}<br>Modified: #{note.modification_date.get}</p>")
+    html = rtf_to_html(get_note_rtf(note_query))
+    html.sub!(/<body>/, "<body>\n<p>Created: #{creation_date}<br>Modified: #{mod_date}</p>")
 
     if verbose
       puts %{Backing up "#{note_name}" to "#{note_file_name}"}
@@ -122,14 +145,13 @@ folders.each do |folder|
     File.write(note_path, html)
     notes_count += 1
 
-    if note.attachments.count > 0
+    attachments_count = get_count("attachments of #{note_query}")
+    if attachments_count > 0
       $stderr.puts %{[WARNING] Note "#{note_name}" has attachments, which cannot currently be backed up!}
       notes_with_attachments << note_name
     end
   end
 end
-
-notes_app.notes.first.show
 
 # Work around bug with cached index in git gem
 begin
