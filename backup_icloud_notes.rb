@@ -12,6 +12,7 @@ Bundler.require
 require "fileutils"
 require "cgi"
 require "open3"
+require "time"
 
 verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
 
@@ -67,6 +68,7 @@ end
 
 # Functions for getting formatted note data in the jankiest possible way
 def get_note_rtf(note_query)
+  osascript(%{tell application "Notes" to activate})
   osascript(%{tell application "Notes" to show #{note_query}})
   script = <<EOD
   tell application "System Events"
