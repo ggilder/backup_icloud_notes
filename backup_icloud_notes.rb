@@ -14,22 +14,6 @@ require "cgi"
 require "open3"
 require "time"
 
-verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
-
-backup_destination = ARGV.shift
-if !File.directory?(backup_destination) || !File.writable?(backup_destination)
-  $stderr.puts "Backup destination must be a writable directory!"
-  exit 1
-end
-
-git_dir = File.join(backup_destination, ".git")
-git_repo = if !File.directory?(git_dir)
-  puts "Git repository not present in backup destination; initializing"
-  Git.init(backup_destination)
-else
-  Git.open(backup_destination)
-end
-
 def new_git_repo(repo)
   repo.object('HEAD')
   return false
@@ -47,15 +31,6 @@ def git_repo_dirty(repo)
       repo.status.deleted.count > 0
   end
 end
-
-# Fail if any pre-existing changes
-if git_repo_dirty(git_repo)
-  puts "Repo is not in a clean state!"
-  exit(1)
-end
-
-# Delete existing notes so deletions will be caught
-File.delete(*Dir[File.join(backup_destination, "**", "*.html")])
 
 def osascript(script)
   out, err, status = Open3.capture3("osascript", stdin_data: script)
@@ -113,6 +88,34 @@ def get_date(query)
   out = osascript(script)
   DateTime.parse(out.sub(/^date /, ""))
 end
+
+
+######################### Execution ######################
+
+verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
+
+backup_destination = ARGV.shift
+if !File.directory?(backup_destination) || !File.writable?(backup_destination)
+  $stderr.puts "Backup destination must be a writable directory!"
+  exit 1
+end
+
+git_dir = File.join(backup_destination, ".git")
+git_repo = if !File.directory?(git_dir)
+  puts "Git repository not present in backup destination; initializing"
+  Git.init(backup_destination)
+else
+  Git.open(backup_destination)
+end
+
+# Fail if any pre-existing changes
+if git_repo_dirty(git_repo)
+  puts "Repo is not in a clean state!"
+  exit(1)
+end
+
+# Delete existing notes so deletions will be caught
+File.delete(*Dir[File.join(backup_destination, "**", "*.html")])
 
 
 folder_count = get_count("folders")
