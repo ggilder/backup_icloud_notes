@@ -41,6 +41,21 @@ def osascript(script)
   end
 end
 
+def do_with_retry(max_attempts: 10, sleep_between: 1)
+  attempt = 0
+  begin
+    yield
+  rescue StandardError => e
+    if attempt < max_attempts
+      attempt += 1
+      sleep(sleep_between)
+      retry
+    else
+      raise "Failed after #{attempt} attempts: #{e}"
+    end
+  end
+end
+
 # Functions for getting formatted note data in the jankiest possible way
 def get_note_rtf(note_query)
   osascript(%{tell application "Notes" to activate})
@@ -113,6 +128,9 @@ if git_repo_dirty(git_repo)
   puts "Repo is not in a clean state!"
   exit(1)
 end
+
+# Make sure Notes is launched
+do_with_retry { osascript(%{tell application "Notes" to activate}) }
 
 begin
   # Delete existing notes so deletions will be caught
