@@ -210,6 +210,7 @@ begin
   end
 rescue StandardError => e
   git_repo.reset_hard
+  git_repo.clean(force: true)
   $stderr.puts e
   $stderr.puts "Reset repo to clean state."
   exit 1
