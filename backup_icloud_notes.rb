@@ -208,6 +208,9 @@ begin
   if notes_with_attachments.count > 0
     puts "#{notes_with_attachments.count} notes have attachments which cannot currently be backed up."
   end
+
+  # Tell Notes to quit at the end because it gets in a weird state after a while
+  osascript(%{tell application "Notes" to quit})
 rescue StandardError => e
   git_repo.reset_hard
   git_repo.clean(force: true)
