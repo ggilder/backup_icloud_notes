@@ -87,6 +87,10 @@ def rtf_to_html(rtf_data)
   end
 end
 
+def get_note_html(note_query)
+  osascript(%{tell application "Notes" to get the body of #{note_query}})
+end
+
 def get_count(query)
   script = %{tell application "Notes" to get count of #{query}}
   out = osascript(script)
@@ -103,6 +107,22 @@ def get_date(query)
   out = osascript(script)
   DateTime.parse(out.sub(/^date /, ""))
 end
+
+NOTE_TEMPLATE = <<EOD
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title></title>
+  <style type="text/css">
+    body {font: 13.0px 'Helvetica Neue'}
+  </style>
+</head>
+<body>
+{{note_body}}
+</body>
+</html>
+EOD
 
 
 ######################### Execution ######################
@@ -158,8 +178,9 @@ begin
         raise %{File name collision: "#{note_path}" already exists!}
       end
 
-      html = rtf_to_html(get_note_rtf(note_query))
-      html.sub!(/<body>/, "<body>\n<p>Created: #{creation_date}<br>Modified: #{mod_date}</p>")
+      note_html = get_note_html(note_query)
+      html = NOTE_TEMPLATE.sub(/<body>/, "<body>\n<p>Created: #{creation_date}<br>Modified: #{mod_date}</p>")
+      html.sub!(/{{note_body}}/, note_html)
 
       if verbose
         puts %{Backing up "#{note_name}" to "#{note_file_name}"}
@@ -209,8 +230,6 @@ begin
     puts "#{notes_with_attachments.count} notes have attachments which cannot currently be backed up."
   end
 
-  # Tell Notes to quit at the end because it gets in a weird state after a while
-  osascript(%{tell application "Notes" to quit})
 rescue StandardError => e
   git_repo.reset_hard
   git_repo.clean(force: true)
