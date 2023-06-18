@@ -32,105 +32,31 @@ def git_repo_dirty(repo)
   end
 end
 
-def osascript(script)
-  out, err, status = Open3.capture3("osascript", stdin_data: script)
-  if status.success?
-    return out.chomp
-  else
-    raise RuntimeError, err
-  end
-end
-
-def do_with_retry(max_attempts: 10, sleep_between: 1)
-  attempt = 0
-  begin
-    yield
-  rescue StandardError => e
-    if attempt < max_attempts
-      attempt += 1
-      sleep(sleep_between)
-      retry
-    else
-      raise "Failed after #{attempt} attempts: #{e}"
+def ruby_spawn_env(env)
+  env_for_spawn = {
+    "PWD" => nil,
+    "_" => nil,
+  }
+  env.keys.each do |key|
+    if key =~ /^BUNDLE/
+      env_for_spawn[key] = nil
     end
   end
+  env_for_spawn
 end
-
-# Functions for getting formatted note data in the jankiest possible way
-def get_note_rtf(note_query)
-  osascript(%{tell application "Notes" to activate})
-  osascript(%{tell application "Notes" to show #{note_query}})
-  script = <<EOD
-  tell application "System Events"
-        tell process "Notes"
-                click menu item "Float Selected Note" of menu "Window" of menu bar 1
-                click menu item "Select All" of menu "Edit" of menu bar 1
-                click menu item "Copy" of menu "Edit" of menu bar 1
-        end tell
-  end tell
-
-  tell application "Notes"
-          close front window
-          get (the clipboard as «class RTF »)
-  end tell
-EOD
-  out = osascript(script)
-  return out.match(/«data RTF ([0-9A-F]+)»/)[1].scan(/../).map { |x| x.hex }.pack('c*')
-end
-
-def rtf_to_html(rtf_data)
-  out, err, status = Open3.capture3(*%w(textutil -stdin -stdout -convert html -format rtf), stdin_data: rtf_data)
-  if status.success?
-    return out
-  else
-    raise RuntimeError, err
-  end
-end
-
-def get_note_html(note_query)
-  osascript(%{tell application "Notes" to get the body of #{note_query}})
-end
-
-def get_count(query)
-  script = %{tell application "Notes" to get count of #{query}}
-  out = osascript(script)
-  out.to_i
-end
-
-def get_text(query)
-  script = %{tell application "Notes" to get #{query}}
-  osascript(script)
-end
-
-def get_date(query)
-  script = %{tell application "Notes" to get #{query}}
-  out = osascript(script)
-  DateTime.parse(out.sub(/^date /, ""))
-end
-
-NOTE_TEMPLATE = <<EOD
-<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
-<html>
-<head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-  <title></title>
-  <style type="text/css">
-    body {font: 13.0px 'Helvetica Neue'}
-  </style>
-</head>
-<body>
-{{note_body}}
-</body>
-</html>
-EOD
-
 
 ######################### Execution ######################
 
-verbose = !([ARGV.delete('-v'), ARGV.delete('--verbose')].compact.empty?)
+no_commit = ARGV.delete("--no-commit")
+
+notes_parser_path = ARGV.shift
+if !notes_parser_path || !File.readable?(notes_parser_path)
+  $stderr.puts "Incorrect path to notes_cloud_ripper.rb!"
+  exit 1
+end
 
 backup_destination = ARGV.shift
-if !File.directory?(backup_destination) || !File.writable?(backup_destination)
+if !backup_destination || !File.directory?(backup_destination) || !File.writable?(backup_destination)
   $stderr.puts "Backup destination must be a writable directory!"
   exit 1
 end
@@ -149,51 +75,27 @@ if git_repo_dirty(git_repo)
   exit(1)
 end
 
-# Make sure Notes is launched
-do_with_retry { osascript(%{tell application "Notes" to activate}) }
-
 begin
   # Delete existing notes so deletions will be caught
   File.delete(*Dir[File.join(backup_destination, "**", "*.html")])
 
-  folder_count = get_count("folders")
-  folder_names = (1..folder_count).map { |n| get_text("name of folder #{n}") }
-  folder_names.reject! { |name| name == "Recently Deleted" }
+  puts "Backing up notes..."
+  Dir.mktmpdir do |tmpdir|
+    notes_src_path = File.join(Dir.home, "Library", "Group Containers", "group.com.apple.notes")
+    Dir.chdir(File.dirname(notes_parser_path)) do
+      exit_status = Open3.popen2e(ruby_spawn_env(ENV), "ruby", File.basename(notes_parser_path), "--individual-files", "-r", "-m", notes_src_path, "-g", "-o", tmpdir) do |input, out_and_err, wait_thr|
+        out_and_err.each do |line|
+          print(line)
+        end
 
-  notes_count = 0
-  notes_with_attachments = []
-  puts "Backing up #{folder_names.count} folders"
-  folder_names.each do |folder_name|
-    notes_count = get_count(%{notes in folder "#{folder_name}"})
-    puts %{Backing up #{notes_count} notes in folder "#{folder_name}"}
-    FileUtils.mkdir_p(File.join(backup_destination, folder_name))
-    (1..notes_count).each do |note_idx|
-      note_query = %{note #{note_idx} of folder "#{folder_name}"}
-      note_name = get_text(%{name of #{note_query}})
-      creation_date = get_date(%{creation date of #{note_query}})
-      mod_date = get_date(%{modification date of #{note_query}})
-      note_file_name = mod_date.strftime('%Y-%m-%d ') + note_name.gsub(%r([/:]), "-") + ".html"
-      note_path = File.join(backup_destination, folder_name, note_file_name)
-      if File.exist?(note_path)
-        raise %{File name collision: "#{note_path}" already exists!}
+        wait_thr.value
       end
-
-      note_html = get_note_html(note_query)
-      html = NOTE_TEMPLATE.sub(/<body>/, "<body>\n<p>Created: #{creation_date}<br>Modified: #{mod_date}</p>")
-      html.sub!(/{{note_body}}/, note_html)
-
-      if verbose
-        puts %{Backing up "#{note_name}" to "#{note_file_name}"}
-      end
-      File.write(note_path, html)
-      notes_count += 1
-
-      attachments_count = get_count("attachments of #{note_query}")
-      if attachments_count > 0
-        $stderr.puts %{[WARNING] Note "#{note_name}" has attachments, which cannot currently be backed up!}
-        notes_with_attachments << note_name
+      unless exit_status.success?
+        raise "Backup failed!"
       end
     end
+
+    FileUtils.cp_r(File.join(tmpdir, "notes_rip", "html", "note_store1"), File.join(backup_destination))
   end
 
   # Work around bug with cached index in git gem
@@ -215,20 +117,21 @@ begin
 
   puts
   if git_repo_dirty(git_repo)
-    puts "Committing latest backup"
-    git_repo.add(all: true)
-    git_repo.commit("Backup notes")
-    puts "Pushing changes"
-    git_repo.push
+    if no_commit
+      puts "Skipping commit and push; --no-commit flag given."
+    else
+      puts "Committing latest backup"
+      git_repo.add(all: true)
+      git_repo.commit("Backup notes")
+      puts "Pushing changes"
+      git_repo.push
+    end
   else
     puts "No changes to commit."
   end
 
   puts
-  puts "Backed up #{notes_count} notes."
-  if notes_with_attachments.count > 0
-    puts "#{notes_with_attachments.count} notes have attachments which cannot currently be backed up."
-  end
+  puts "Backup completed!"
 
 rescue StandardError => e
   git_repo.reset_hard
