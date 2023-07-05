@@ -83,7 +83,7 @@ begin
   Dir.mktmpdir do |tmpdir|
     notes_src_path = File.join(Dir.home, "Library", "Group Containers", "group.com.apple.notes")
     Dir.chdir(File.dirname(notes_parser_path)) do
-      exit_status = Open3.popen2e(ruby_spawn_env(ENV), "ruby", File.basename(notes_parser_path), "--individual-files", "-r", "-m", notes_src_path, "-g", "-o", tmpdir) do |input, out_and_err, wait_thr|
+      exit_status = Open3.popen2e(ruby_spawn_env(ENV), "ruby", File.basename(notes_parser_path), "--individual-files", "--uuid", "-r", "-m", notes_src_path, "-g", "-o", tmpdir) do |input, out_and_err, wait_thr|
         out_and_err.each do |line|
           print(line)
         end
