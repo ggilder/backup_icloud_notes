@@ -32,19 +32,6 @@ def git_repo_dirty(repo)
   end
 end
 
-def ruby_spawn_env(env)
-  env_for_spawn = {
-    "PWD" => nil,
-    "_" => nil,
-  }
-  env.keys.each do |key|
-    if key =~ /^BUNDLE/
-      env_for_spawn[key] = nil
-    end
-  end
-  env_for_spawn
-end
-
 ######################### Execution ######################
 
 no_commit = ARGV.delete("--no-commit")
@@ -83,15 +70,17 @@ begin
   Dir.mktmpdir do |tmpdir|
     notes_src_path = File.join(Dir.home, "Library", "Group Containers", "group.com.apple.notes")
     Dir.chdir(File.dirname(notes_parser_path)) do
-      exit_status = Open3.popen2e(ruby_spawn_env(ENV), "ruby", File.basename(notes_parser_path), "--individual-files", "--uuid", "-r", "-m", notes_src_path, "-g", "-o", tmpdir) do |input, out_and_err, wait_thr|
-        out_and_err.each do |line|
-          print(line)
-        end
+      Bundler.with_clean_env do
+        exit_status = Open3.popen2e("ruby", File.basename(notes_parser_path), "--individual-files", "--uuid", "-r", "-m", notes_src_path, "-g", "-o", tmpdir) do |input, out_and_err, wait_thr|
+          out_and_err.each do |line|
+            print(line)
+          end
 
-        wait_thr.value
-      end
-      unless exit_status.success?
-        raise "Backup failed!"
+          wait_thr.value
+        end
+        unless exit_status.success?
+          raise "Backup failed!"
+        end
       end
     end
 
